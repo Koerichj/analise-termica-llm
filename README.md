@@ -1,106 +1,193 @@
 # Análise Térmica Industrial com LLM
 
-**Aplicação em Python e Streamlit que transforma indicadores de monitoramento térmico industrial em análises e relatórios interpretativos com apoio de um modelo de linguagem (LLM).**
+**Do dado industrial à interpretação técnica: ETL, análise exploratória, validação operacional e relatórios assistidos por IA.**
 
-> Projeto de portfólio desenvolvido a partir de um sistema acadêmico de monitoramento do pré-aquecimento de água industrial.
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![Pandas](https://img.shields.io/badge/Pandas-ETL%20%26%20An%C3%A1lise-150458?logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+[![Plotly](https://img.shields.io/badge/Plotly-Visualiza%C3%A7%C3%A3o-3F4F75?logo=plotly&logoColor=white)](https://plotly.com/python/)
+[![OpenAI API](https://img.shields.io/badge/OpenAI_API-LLM-412991?logo=openai&logoColor=white)](https://platform.openai.com/docs/)
 
-## 1. Contexto e problema
+**[Código-fonte](https://github.com/Koerichj/analise-termica-llm)** · **[Relatório técnico demonstrativo (PDF)](docs/relatorios/relatorio-tecnico-demonstracao.pdf)** · **[Projeto de monitoramento que deu origem à análise](https://github.com/Koerichj/monitoramento-termico-industrial-portfolio)**
 
-O monitoramento de pré-aquecimento de água industrial produz registros de temperatura, vazão, energia e estados operacionais. Esses dados precisam ser tratados e contextualizados para apoiar a análise do desempenho térmico e a identificação de inconsistências.
+> **Escopo:** protótipo acadêmico e de portfólio baseado em dados de **monitoramento térmico simulado**. Os indicadores são calculados pela aplicação; o modelo de linguagem interpreta um resumo estruturado. Os resultados apresentados **não demonstram desempenho, falhas ou economia de uma instalação industrial real**.
 
-A proposta é conectar **engenharia de dados, análise exploratória e IA generativa** em um único fluxo, sem atribuir ao LLM a responsabilidade pelos cálculos numéricos.
+## Visão do produto
 
-## 2. O que a aplicação implementa
+O projeto transforma leituras de pré-aquecimento de água industrial em informação analisável. A aplicação permite **importar bases CSV/XLSX, padronizar os dados, explorar tendências, verificar regras operacionais e preparar relatórios técnico, executivo ou acadêmico**, com apoio de um LLM.
 
-- **ETL:** importação de arquivos CSV ou XLSX e preparação das leituras com Python e Pandas.
-- **Análise exploratória:** consulta de indicadores, comportamento das variáveis e filtros por período.
-- **Interpretação com IA:** envio de um resumo estruturado dos indicadores à API da OpenAI para elaboração de relatórios.
-- **Relatórios:** formatos técnico, executivo e acadêmico, com exibição no Streamlit e exportação em PDF.
+![Visão geral da aplicação Streamlit — painel e módulos](docs/imagens/dashboard-visao-geral.png)
 
-**Demonstração:** a amostra sintética cobre o ETL, a exploração e a preparação dos três relatórios. Os testes usam uma resposta simulada para verificar a geração e a exportação sem chamada externa.
+*Visão geral em Streamlit. Os oito registros exibidos na página inicial pertencem à amostra sintética de demonstração; o ETL pode carregar bases maiores.*
 
-## 3. Arquitetura
+### O que foi implementado
+
+| Módulo | Entrega | Tecnologias |
+| --- | --- | --- |
+| **Engenharia de dados** | Importação CSV/XLSX, compatibilização de esquemas, datas, tipos e estados operacionais | Python, Pandas, OpenPyXL |
+| **Análise exploratória** | Filtros de período/estado, métricas térmicas, gráficos e distribuições | Pandas, Plotly, Streamlit |
+| **Conformidade operacional** | Verificação por registro das combinações de estado, válvulas e vazão; identificação de motivos de inconformidade | Python, Pandas |
+| **Interpretação com IA** | Envio de indicadores previamente calculados para interpretação textual com instruções e ressalvas | OpenAI Responses API, prompt estruturado |
+| **Relatórios** | Seleção de relatório técnico, executivo ou acadêmico e exportação em PDF | Streamlit, ReportLab |
+
+## Demonstração com dados simulados
+
+A captura do módulo ETL registra **78.970 leituras processadas** de uma base sintética importada. O relatório disponibilizado abaixo analisa **um recorte de 31.559 leituras**, correspondente a 30 dias. São quantidades diferentes porque representam etapas e filtros diferentes.
+
+### 1. Importação e tratamento (ETL)
+
+![ETL com visualização dos registros originais e 78.970 leituras processadas](docs/imagens/etl-base-importada.png)
+
+A camada de preparação aceita o esquema simplificado de demonstração e o esquema original do monitoramento. Normaliza campos como `timestamp`/`dt_registro`, `temperatura_entrada`/`nr_temperatura_entrada` e valores de válvulas. A política de datas sem indicação de fuso é configurável, evitando interpretações silenciosas.
+
+### 2. Indicadores e recortes por período
+
+![Análise exploratória com filtros e indicadores de um recorte de 30 dias](docs/imagens/analise-indicadores.png)
+
+A análise trabalha com temperatura de entrada e saída, diferença térmica (ΔT), vazão, energia **calculada**, indicador de desempenho relativo ao ΔT de referência e economia **estimada**. Valores indisponíveis devem ser identificados como `N/D`, em vez de tratados como medições existentes.
+
+<details>
+<summary><strong>Ver gráficos, distribuições e indicadores por estado</strong></summary>
+
+#### Evolução temporal e ganho térmico
+
+![Séries temporais de temperatura e ganho térmico](docs/imagens/analise-graficos.png)
+
+#### Desempenho por estado e criticidades
+
+![Distribuições de desempenho térmico e criticidade operacional](docs/imagens/analise-desempenho-criticidade.png)
+
+</details>
+
+### 3. Contexto estruturado para relatórios com IA
+
+![Interface de relatório com IA, indicadores e conformidade operacional](docs/imagens/relatorio-com-ia.png)
+
+O sistema calcula estatísticas e conformidade **antes** de consultar o modelo. A IA recebe o contexto consolidado, não substitui o ETL e não deve reconstruir nem alterar os cálculos numéricos. As respostas exigem revisão humana, especialmente ao tratar hipóteses e recomendações operacionais.
+
+## Estudo de caso — relatório técnico de 30 dias
+
+**Fonte:** [relatório técnico de demonstração em PDF (7 páginas)](docs/relatorios/relatorio-tecnico-demonstracao.pdf). O documento utiliza exclusivamente registros **sintéticos** e resume resultados fornecidos pela aplicação.
+
+| Indicador do recorte | Resultado informado |
+| --- | ---: |
+| Intervalo | 10/10/2026 a 09/11/2026 |
+| Registros analisados | **31.559** |
+| Temperatura média de entrada | **18,52 °C** |
+| Temperatura média de saída | **25,52 °C** |
+| ΔT médio | **6,99 °C** |
+| Atendimento médio ao ΔT de referência (15 °C) | **44,38%** |
+| Vazão média | **1,01 L/min** |
+| Conformidade entre registros avaliáveis | **96,50%** (30.350 de 31.451) |
+| Registros inconformes / indeterminados | **1.101 / 108** |
+| Energia térmica calculada | **525,5971 kWh** |
+| Economia financeira estimada (R$ 0,52/kWh) | **R$ 273,31** |
+
+**Interpretação técnica da demonstração:** o relatório identifica maior incidência de regras violadas em `RECARREGANDO` e `TRANSFERINDO`. Essas ocorrências refletem **inconsistências lógicas nas leituras simuladas**; não comprovam defeitos de válvulas, sensores ou equipamentos reais. Os 44,38% representam atendimento médio ao ΔT de referência, **não eficiência termodinâmica**. A energia e a economia são resultados calculados/estimados, **não medições de economia efetiva**.
+
+> O PDF documenta um exemplo de saída. A disponibilidade do arquivo **não substitui a validação de uma chamada real da API OpenAI no ambiente de quem reproduzir o projeto**; testes automatizados usam respostas simuladas para evitar custo e dependência de rede.
+
+## Arquitetura e fluxo de dados
 
 ```mermaid
 flowchart LR
-    A[Arquivo CSV / XLSX] --> B[ETL e preparação]
-    B --> C[Dados processados]
+    A[CSV / XLSX] --> B[ETL e validação]
+    B --> C[Base padronizada]
     C --> D[Análise exploratória]
-    C --> E[Indicadores e resumo estruturado]
-    E --> F[API OpenAI / LLM]
-    F --> G[Relatório interpretativo]
-    G --> H[Streamlit e PDF]
+    C --> E[Indicadores e conformidade]
+    E --> F[Resumo estruturado]
+    F --> G[OpenAI Responses API]
+    G --> H[Relatório interpretativo]
+    H --> I[Streamlit / PDF]
 ```
 
-Os indicadores são processados em Python; o LLM recebe os dados consolidados e gera **interpretação em linguagem natural**. A saída do modelo pode conter erros e deve ser revisada antes do uso para decisões operacionais.
+**Separação de responsabilidades:** Pandas calcula, filtra e valida; o LLM descreve resultados, hipóteses e pontos de atenção com base no resumo fornecido. A aplicação **não controla a planta industrial** e **não lê sensores diretamente** neste repositório.
 
-## 4. Tecnologias
+- [Arquitetura técnica e limites do projeto](docs/ARQUITETURA.md)
+- [Prompt de análise e diretrizes](prompts/analise_termica.md)
+- [Esquema da amostra sintética](data/README.md)
 
-| Tecnologia | Aplicação |
-| --- | --- |
-| Python | Processamento e lógica da aplicação |
-| Pandas | Preparação de dados e indicadores |
-| Streamlit | Interface e navegação |
-| Plotly | Visualizações da análise exploratória |
-| OpenAI API | Geração de relatórios interpretativos com LLM |
-| ReportLab | Exportação de relatórios em PDF |
+## Executar localmente
 
-## 5. Organização do código
-
-| Arquivo | Responsabilidade |
-| --- | --- |
-| `streamlit_app.py` | Entrada da interface e navegação entre as páginas |
-| `etl_monitoramento.py` | Upload e preparação da base de dados |
-| `function_monitoramento.py` | Funções auxiliares, tratamento de dados e PDF |
-| `exploratoria_monitoramento.py` | Análise exploratória e visualizações |
-| `inteligencia_monitoramento.py` | Indicadores, construção do contexto e exibição do relatório |
-| `integracao_openai.py` | Configuração e chamada à Responses API com mensagens de erro controladas |
-| `prompts/analise_termica.md` | Instruções compartilhadas pelos três tipos de relatório |
-| `requirements.txt` | Dependências do ambiente Python |
-
-## 6. Execução local (Windows / PowerShell)
-
-Use Python 3.11. A geração de relatórios com IA requer uma chave de API e um modelo disponível para o projeto na OpenAI.
+**Requisitos:** Python 3.11, Windows/PowerShell (exemplo abaixo) e conexão com a internet **somente** para instalar dependências ou utilizar a API.
 
 ```powershell
-# Clonar o repositório
-git clone https://github.com/KoerichJ/analise-termica-llm.git
+# Clonar o projeto
+git clone https://github.com/Koerichj/analise-termica-llm.git
 cd analise-termica-llm
 
-# Preparar o ambiente
+# Criar ambiente isolado e instalar dependências
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 
-# Criar configuração local (não publicar credenciais)
+# Preparar configuração local (não versionar .env)
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-# Preencha OPENAI_API_KEY e OPENAI_MODEL no arquivo .env para usar IA
 
 # Iniciar a aplicação
 python -m streamlit run streamlit_app.py
 ```
 
-Na interface, importe e processe uma base pela página **ETL** antes de acessar **Análise Exploratória** ou **Relatório com IA**. A aplicação utiliza os dados processados armazenados na sessão do Streamlit.
+### Testar sem consumir a API
 
-Para demonstrar o fluxo, importe `data/amostra_leituras.csv` no ETL com o fuso padrão, clique em **Processar dados** e abra as páginas de análise e relatório. A exploração e o resumo estatístico funcionam localmente, sem chave. Consulte o esquema, os fusos e as métricas em [Dados de exemplo](data/README.md).
+1. Abra a aplicação Streamlit e acesse **ETL**.
+2. Importe `data/amostra_leituras.csv`, escolha a interpretação de fuso adequada e clique em **Processar dados**.
+3. Navegue por **Análise Exploratória** e **Relatório com IA** para conferir os indicadores calculados.
+4. A geração de texto pelo modelo requer configuração de credenciais; os módulos de dados podem ser demonstrados localmente.
 
-A variável `OPENAI_MODEL` seleciona o modelo. O exemplo usa [GPT-6 Luna, compatível com a Responses API](https://developers.openai.com/api/docs/models/gpt-6-luna). O botão **Gerar relatório com IA** envia o resumo consolidado. Para testar a conexão isoladamente, `python teste_openai.py --executar` faz uma chamada real que pode gerar cobrança. O comando abaixo roda os testes locais.
+Execute os testes automatizados:
 
 ```powershell
-python -m unittest discover -s tests -v
+py -3.11 -m unittest discover -s tests -v
 ```
 
-## 7. Uso responsável da IA
+Na revisão local documentada em **23/11/2026**, **9 testes foram aprovados** com Python 3.11, incluindo importação CSV/XLSX, normalização, cálculos e geração de PDF com **resposta simulada**. Esse resultado não é uma certificação de operação industrial nem um teste de acesso real à OpenAI.
 
-- Os cálculos são realizados pela aplicação; o modelo atua na interpretação dos resultados fornecidos.
-- As respostas são geradas a partir de contexto estruturado, não de uma leitura independente dos sensores.
-- Não publicar chaves da API, dados industriais sensíveis ou arquivos `.env`.
-- Validar as conclusões geradas e distinguir dados medidos, estimativas e interpretações.
-- Revisar relatórios antes de utilizá-los em qualquer decisão operacional.
+### Configurar a integração com IA
 
-## 8. Origem do projeto
+No arquivo `.env` local, defina:
 
-Este repositório reúne a camada de análise de dados e IA construída a partir do **TCC de monitoramento térmico industrial**. O projeto-base contempla a aquisição e o monitoramento de variáveis do pré-aquecimento de água; o código e a infraestrutura completos do TCC podem permanecer em repositório privado.
+```dotenv
+OPENAI_API_KEY=sua_chave_aqui
+OPENAI_MODEL=identificador_de_modelo_habilitado_na_sua_conta
+```
 
-**Autor:** Jean Koerich  
-**Contexto:** Portfólio acadêmico e profissional em Engenharia de Dados e Inteligência Artificial aplicada.
+Utilize um modelo disponível para sua organização e compatível com a **Responses API**. A operação pode gerar custos de uso. **Nunca compartilhe a chave, publique o `.env` ou envie dados industriais confidenciais sem autorização.**
+
+## Estrutura do repositório
+
+```text
+analise-termica-llm/
+├── streamlit_app.py              # Visão geral e navegação
+├── etl_monitoramento.py          # Importação de arquivos
+├── function_monitoramento.py     # Normalização, auxiliares e PDF
+├── exploratoria_monitoramento.py # Estatísticas, filtros e gráficos
+├── inteligencia_monitoramento.py # Indicadores, conformidade e relatórios
+├── integracao_openai.py          # Configuração e chamada à API
+├── prompts/
+│   └── analise_termica.md        # Instruções do LLM
+├── tests/                       # Testes automatizados
+├── data/                        # CSV sintético e documentação
+├── docs/
+│   ├── ARQUITETURA.md
+│   ├── imagens/                  # Capturas de tela deste portfólio
+│   └── relatorios/               # PDF de demonstração
+└── requirements.txt
+```
+
+## Limitações e próximos passos
+
+- **Origem simulada:** o conjunto demonstrativo não representa medições de uma planta em operação.
+- **Estimativas:** o indicador de desempenho não mede eficiência termodinâmica; a economia financeira não foi medida.
+- **IA:** respostas podem conter erros; não substituem diagnóstico de engenharia nem validação dos resultados.
+- **Integração:** o acesso real à Responses API depende da conta, do modelo e das credenciais configuradas.
+- **Reprodutibilidade:** a demonstração é local, mediante importação do arquivo. Não há implantação pública do Streamlit informada neste repositório.
+- **Evolução:** ampliar testes de integração, consolidar contratos de dados e validar com dados físicos autorizados.
+
+## Projeto relacionado
+
+Este trabalho amplia a camada analítica do projeto acadêmico **[Sistema de Monitoramento do Pré-Aquecimento de Água Industrial](https://github.com/Koerichj/monitoramento-termico-industrial-portfolio)**, que documenta Node-RED, Raspberry Pi, PostgreSQL, API REST e dashboard web. Os repositórios são **independentes**; o fluxo desta aplicação recebe arquivos CSV/XLSX, sem integração automática de dados entre eles.
+
+**Autor:** Jean Koerich · Bacharelado em Sistemas de Informação, UNIDAVI · 2026.
+
+**Licenciamento:** a publicação do código no GitHub não concede automaticamente permissão de reutilização ou redistribuição quando não há licença expressa.
