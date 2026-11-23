@@ -17,7 +17,7 @@ A proposta é conectar **engenharia de dados, análise exploratória e IA genera
 - **Interpretação com IA:** envio de um resumo estruturado dos indicadores à API da OpenAI para elaboração de relatórios.
 - **Relatórios:** formatos técnico, executivo e acadêmico, com exibição no Streamlit e exportação em PDF.
 
-**Status:** o fluxo de processamento e a chamada à API estão implementados no código. A execução ponta a ponta com a base de demonstração e os cenários de avaliação ainda precisam de validação; não há resultados de desempenho da IA publicados neste repositório.
+**Demonstração:** a amostra sintética cobre o ETL, a exploração e a preparação dos três relatórios. Os testes usam uma resposta simulada para verificar a geração e a exportação sem chamada externa.
 
 ## 3. Arquitetura
 
@@ -53,26 +53,28 @@ Os indicadores são processados em Python; o LLM recebe os dados consolidados e 
 | `etl_monitoramento.py` | Upload e preparação da base de dados |
 | `function_monitoramento.py` | Funções auxiliares, tratamento de dados e PDF |
 | `exploratoria_monitoramento.py` | Análise exploratória e visualizações |
-| `inteligencia_monitoramento.py` | Indicadores, construção do contexto, chamada ao LLM e exibição do relatório |
+| `inteligencia_monitoramento.py` | Indicadores, construção do contexto e exibição do relatório |
+| `integracao_openai.py` | Configuração e chamada à Responses API com mensagens de erro controladas |
+| `prompts/analise_termica.md` | Instruções compartilhadas pelos três tipos de relatório |
 | `requirements.txt` | Dependências do ambiente Python |
 
 ## 6. Execução local (Windows / PowerShell)
 
-Pré-requisitos: Python compatível com `requirements.txt` e uma chave de API válida para usar a geração de relatórios com IA.
+Use Python 3.11. A geração de relatórios com IA requer uma chave de API e um modelo disponível para o projeto na OpenAI.
 
 ```powershell
 # Clonar o repositório
-git clone https://github.com/JeanKoerich/analise-termica-llm.git
+git clone https://github.com/KoerichJ/analise-termica-llm.git
 cd analise-termica-llm
 
 # Preparar o ambiente
-py -m venv .venv
+py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 
 # Criar configuração local (não publicar credenciais)
-Copy-Item .env.example .env
-# Preencha OPENAI_API_KEY no arquivo .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+# Preencha OPENAI_API_KEY e OPENAI_MODEL no arquivo .env para usar IA
 
 # Iniciar a aplicação
 python -m streamlit run streamlit_app.py
@@ -80,9 +82,13 @@ python -m streamlit run streamlit_app.py
 
 Na interface, importe e processe uma base pela página **ETL** antes de acessar **Análise Exploratória** ou **Relatório com IA**. A aplicação utiliza os dados processados armazenados na sessão do Streamlit.
 
-**Compatibilidade dos dados:** o código atual utiliza, entre outras, a coluna `dt_registro` e medidas com prefixo `nr_`. O arquivo `data/amostra_leituras.csv` contém dados **sintéticos**, com nomes de colunas diferentes, e ainda precisa ser adaptado para demonstrar o fluxo completo. Não é uma base de produção.
+Para demonstrar o fluxo, importe `data/amostra_leituras.csv` no ETL com o fuso padrão, clique em **Processar dados** e abra as páginas de análise e relatório. A exploração e o resumo estatístico funcionam localmente, sem chave. Consulte o esquema, os fusos e as métricas em [Dados de exemplo](data/README.md).
 
-**Configuração do modelo:** o identificador de modelo está definido em `MODELO_OPENAI`, no arquivo `inteligencia_monitoramento.py`. Verifique sua disponibilidade e permissões de acesso antes de executar a funcionalidade de IA.
+A variável `OPENAI_MODEL` seleciona o modelo. O exemplo usa [GPT-6 Luna, compatível com a Responses API](https://developers.openai.com/api/docs/models/gpt-6-luna). O botão **Gerar relatório com IA** envia o resumo consolidado. Para testar a conexão isoladamente, `python teste_openai.py --executar` faz uma chamada real que pode gerar cobrança. O comando abaixo roda os testes locais.
+
+```powershell
+python -m unittest discover -s tests -v
+```
 
 ## 7. Uso responsável da IA
 

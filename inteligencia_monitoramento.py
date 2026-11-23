@@ -1,24 +1,23 @@
-import os
 import json
+import math
+from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from dotenv import load_dotenv
-from openai import OpenAI
+from integracao_openai import gerar_texto, ErroIntegracaoOpenAI
 
 from function_monitoramento import (
     gerar_pdf_relatorio,
-    normalizar_moeda_relatorio
+    normalizar_moeda_relatorio,
+    formatar_valor,
+    total_periodo,
+    TARIFA_KWH,
 )
 # ============================================================
 # CONFIGURAÇÕES
 # ============================================================
 
-load_dotenv()
-
-MODELO_OPENAI = "gpt-6-luna"
-
-TARIFA_KWH = 0.52
+PROMPT = Path(__file__).resolve().parent / "prompts" / "analise_termica.md"
 DELTA_T_REFERENCIA_C = 15.0
 FLUXO_MINIMO_L_MIN = 0.5
 
@@ -31,14 +30,8 @@ def numero_seguro(valor, casas=2):
     if valor is None or pd.isna(valor):
         return None
 
-    return round(float(valor), casas)
-
-
-def formatar_valor(valor, unidade=""):
-    if valor is None or pd.isna(valor):
-        return "N/D"
-
-    return f"{float(valor):.2f}{unidade}"
+    valor = float(valor)
+    return round(valor, casas) if math.isfinite(valor) else None
 
 
 def distribuicao(base, coluna):
@@ -892,6 +885,10 @@ if df["dt_registro"].dt.tz is not None:
     )
 
 
+datas_invalidas = int(df["dt_registro"].isna().sum())
+if datas_invalidas:
+    st.warning(f"{datas_invalidas:,} registros com data inválida foram excluídos.")
+
 df = (
     df
     .dropna(
@@ -1022,6 +1019,10 @@ else:
         )
     )
 
+    if data_inicial is None or data_final is None:
+        st.info("Informe as duas datas para aplicar o período personalizado.")
+        st.stop()
+
     inicio = pd.Timestamp(
         data_inicial
     )
@@ -1034,7 +1035,7 @@ else:
             days=1
         )
         - pd.Timedelta(
-            microseconds=1
+            nanoseconds=1
         )
     )
 
@@ -1158,41 +1159,12 @@ base = aplicar_conformidade_operacional(
 # INDICADORES DO PERÍODO
 # ============================================================
 
-energia_periodo = (
-    numero_seguro(
-        base[
-            "nr_energia_kwh"
-        ].sum(),
-        4
-    )
-    if "nr_energia_kwh"
-    in base.columns
-    else None
-)
-
-
-volume_periodo = (
-    numero_seguro(
-        base[
-            "nr_volume_instante_l"
-        ].sum(),
-        2
-    )
-    if "nr_volume_instante_l"
-    in base.columns
-    else None
-)
-
-
-economia_estimada = (
-    round(
-        energia_periodo
-        * TARIFA_KWH,
-        2
-    )
-    if energia_periodo
-    is not None
-    else None
+energia_total = total_periodo(base, "nr_energia_kwh")
+energia_periodo = numero_seguro(energia_total, 4)
+volume_periodo = numero_seguro(total_periodo(base, "nr_volume_instante_l"), 2)
+economia_estimada = numero_seguro(energia_total * TARIFA_KWH)
+desempenho = base.get(
+    "nr_desempenho_termico_percentual", pd.Series(dtype=float)
 )
 
 
@@ -1368,7 +1340,26 @@ regras_operacionais = {
 # RESUMO ESTATÍSTICO
 # ============================================================
 
+origens = base.get("ds_origem", pd.Series(dtype="string")).astype("string").str.strip().str.lower()
+registros_sinteticos = int(origens.isin(
+    ["simulacao", "simulação", "simulado", "sintetico", "sintético"]
+).sum())
+
 resumo = {
+    "qualidade_dados": {
+        "registros_na_base_com_data_invalida": datas_invalidas,
+        "registros_no_recorte": len(base),
+        "registros_no_recorte_com_origem_sintetica": registros_sinteticos,
+        "leituras_disponiveis_por_indicador": {
+            coluna: int(base[coluna].count()) if coluna in base else 0
+            for coluna in (
+                "nr_temperatura_entrada", "nr_temperatura_saida", "nr_delta_t",
+                "nr_vazao_l_min", "nr_energia_kwh", "nr_volume_instante_l",
+                "nr_desempenho_termico_percentual",
+            )
+        },
+    },
+
 
     "filtros": {
 
@@ -1577,23 +1568,17 @@ resumo = {
 
         "media":
             numero_seguro(
-                base[
-                    "nr_desempenho_termico_percentual"
-                ].mean()
+                desempenho.mean()
             ),
 
         "minimo":
             numero_seguro(
-                base[
-                    "nr_desempenho_termico_percentual"
-                ].min()
+                desempenho.min()
             ),
 
         "maximo":
             numero_seguro(
-                base[
-                    "nr_desempenho_termico_percentual"
-                ].max()
+                desempenho.max()
             ),
 
         "delta_t_referencia_c":
@@ -1695,8 +1680,12 @@ resumo = {
 # MÉTRICAS VISUAIS
 # ============================================================
 
-st.subheader(
-    "Resumo da análise"
+st.subheader("Resumo da análise")
+if registros_sinteticos:
+    st.info(f"{registros_sinteticos:,} registros do recorte têm origem sintética.")
+st.caption(
+    "O desempenho térmico expressa o atendimento ao ΔT de projeto. "
+    "A economia é uma estimativa pela tarifa de referência."
 )
 
 
@@ -1774,9 +1763,7 @@ col6.metric(
 col7.metric(
     "Desempenho médio",
     formatar_valor(
-        base[
-            "nr_desempenho_termico_percentual"
-        ].mean(),
+        desempenho.mean(),
         " %"
     )
 )
@@ -2011,206 +1998,22 @@ das interpretações produzidas pelo modelo de linguagem.
 if st.button(
     "Gerar relatório com IA",
     type="primary",
-    use_container_width=False
+    width="content"
 ):
 
-    api_key = os.getenv(
-        "OPENAI_API_KEY"
-    )
-
-
-    if not api_key:
-
-        st.error(
-            "A chave OPENAI_API_KEY não foi encontrada no arquivo .env."
-        )
-
-        st.stop()
-
-
-    dados_json = json.dumps(
-        resumo,
-        ensure_ascii=False,
-        indent=2,
-        default=str
-    )
-
-
-    prompt = f"""
-Você é um analista de dados industriais especializado
-em sistemas de monitoramento térmico.
-
-Os dados fornecidos abaixo foram previamente tratados
-e calculados por uma aplicação Python utilizando Pandas.
-
-Sua função NÃO é recalcular os dados.
-Sua função é interpretar os indicadores fornecidos e
-produzir um relatório em linguagem natural.
-
-{instrucoes_tipo}
-
-
-REGRAS OBRIGATÓRIAS:
-
-- Utilize exclusivamente os dados fornecidos.
-
-- Não invente valores.
-
-- Não invente causas para os comportamentos observados.
-
-- Não afirme que existe uma causa física sem evidência
-  suficiente nos dados.
-
-- Diferencie claramente fatos observados de interpretações.
-
-- Caso identifique comportamento incomum, classifique-o
-  como ponto de atenção, não como diagnóstico definitivo.
-
-- A conformidade operacional já foi calculada pelo Pandas
-  cruzando estado, válvula de entrada, válvula de saída
-  e vazão em cada registro.
-
-- Use os resultados de "conformidade_operacional" e
-  "estatisticas_por_estado" como referência principal
-  para analisar coerência operacional.
-
-- Quando existirem registros INCONFORMES, utilize os campos
-  "motivos_inconformidade_operacional" e
-  "motivos_inconformidade" de cada estado para informar
-  quais regras lógicas foram violadas.
-
-- Diferencie claramente:
-  válvula de entrada incorreta,
-  válvula de saída incorreta
-  e vazão incompatível com o estado.
-
-- Um mesmo registro pode violar mais de uma regra.
-  Portanto, a soma das quantidades por motivo pode ser
-  maior que o total de registros inconformes.
-
-- Esses motivos representam violações das regras lógicas
-  do sistema. Não os apresente como causa física comprovada
-  de uma falha.
-
-- NÃO tente reconstruir a conformidade usando apenas
-  distribuições agregadas de válvulas ou vazão.
-
-- O valor de {FLUXO_MINIMO_L_MIN:.1f} L/min é um
-  LIMIAR LÓGICO para distinguir presença e ausência de fluxo.
-
-- Esse limiar NÃO representa a vazão nominal esperada
-  em AQUECENDO e MATURANDO.
-
-- Em AQUECENDO, a vazão nominal esperada é 0 L/min.
-  Para a validação lógica do sistema, vazão <=
-  {FLUXO_MINIMO_L_MIN:.1f} L/min é tratada como ausência
-  de fluxo.
-
-- Em MATURANDO, a vazão nominal esperada é 0 L/min.
-  Para a validação lógica do sistema, vazão <=
-  {FLUXO_MINIMO_L_MIN:.1f} L/min é tratada como ausência
-  de fluxo.
-
-- Em RECARREGANDO, espera-se entrada aberta, saída fechada
-  e vazão > {FLUXO_MINIMO_L_MIN:.1f} L/min.
-
-- Em TRANSFERINDO, esperam-se ambas as válvulas abertas
-  e vazão > {FLUXO_MINIMO_L_MIN:.1f} L/min.
-
-- Não classifique automaticamente ΔT baixo como falha.
-  Utilize as classificações de criticidade fornecidas
-  pelo próprio sistema.
-
-- O ΔT de referência do projeto é
-  {DELTA_T_REFERENCIA_C:.0f} °C.
-
-- O indicador de desempenho térmico NÃO representa
-  eficiência termodinâmica.
-
-- O desempenho térmico é calculado individualmente em
-  cada leitura e depois agregado estatisticamente.
-
-- NÃO recalcule o desempenho térmico médio usando
-  simplesmente:
-  ΔT médio / {DELTA_T_REFERENCIA_C:.0f} × 100.
-
-- A média dos desempenhos individuais pode diferir do
-  resultado obtido ao aplicar a fórmula sobre o ΔT médio.
-
-- 100% de desempenho térmico significa que o ganho térmico
-  de referência foi atingido ou superado naquela leitura.
-  Isso NÃO significa 100% de eficiência termodinâmica.
-
-- A economia financeira apresentada é uma ESTIMATIVA,
-  calculada a partir da energia térmica e da tarifa de
-  referência de R$ {TARIFA_KWH:.2f}/kWh.
-
-- Não apresente a economia como redução financeira
-  comprovada em ambiente industrial real.
-
-- Considere a origem dos dados apresentada no resumo.
-  Caso a origem seja simulada, deixe explícito que os
-  resultados foram obtidos sobre dados simulados.
-
-- Quando comentar a frequência dos estados, utilize os
-  termos "percentual de registros" ou "participação dos
-  registros". Não converta automaticamente esse percentual
-  em tempo de operação.
-
-- Ao escrever valores monetários brasileiros, use
-  obrigatoriamente o formato "R$ 0,00".
-
-- Nunca utilize "R`", "R´" ou outra variação.
-
-- Utilize unidades sempre que apresentar valores:
-  °C, L/min, L, kWh, % e R$.
-
-- Utilize linguagem clara, profissional e objetiva.
-
-
-DADOS CALCULADOS PELO SISTEMA:
-
-{dados_json}
-"""
-
-
     try:
+        instrucoes = f"{PROMPT.read_text(encoding='utf-8')}\n\n{instrucoes_tipo}"
+        dados_json = json.dumps(resumo, ensure_ascii=False, indent=2, allow_nan=False)
 
-        with st.spinner(
-            "Analisando os indicadores e gerando o relatório..."
-        ):
+        with st.spinner("Analisando os indicadores e gerando o relatório..."):
+            relatorio = gerar_texto(dados_json, instrucoes=instrucoes)
 
-            client = OpenAI(
-                api_key=api_key
-            )
-
-
-            response = (
-                client.responses.create(
-                    model=MODELO_OPENAI,
-                    input=prompt
-                )
-            )
-
-        relatorio = normalizar_moeda_relatorio(
-            response.output_text
-        )
-
-        st.session_state[
-            "relatorio_ia"
-        ] = relatorio
-
-
-        st.session_state[
-            "relatorio_contexto"
-        ] = contexto_atual
-
-
-    except Exception as erro:
-
-        st.error(
-            f"Erro ao gerar relatório: {erro}"
-        )
+        st.session_state["relatorio_ia"] = normalizar_moeda_relatorio(relatorio)
+        st.session_state["relatorio_contexto"] = contexto_atual
+    except ErroIntegracaoOpenAI as erro:
+        st.error(str(erro))
+    except (OSError, UnicodeError):
+        st.error("Não foi possível ler o arquivo de instruções do relatório.")
 
 # ============================================================
 # EXIBIR RELATÓRIO

@@ -1,5 +1,6 @@
 import re
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 import pandas as pd
 
@@ -55,74 +56,142 @@ MEDIDAS = [
 ]
 
 
-def preparar_base(df):
+MAPA_COLUNAS = {
+    "timestamp": "dt_registro",
+    "origem": "ds_origem",
+    "estado_processo": "ds_estado_processo",
+    "ciclo": "nr_ciclo",
+    "temperatura_entrada": "nr_temperatura_entrada",
+    "temperatura_saida": "nr_temperatura_saida",
+    "delta_t": "nr_delta_t",
+    "vazao_l_min": "nr_vazao_l_min",
+    "valvula_entrada": "ds_valvula_entrada",
+    "valvula_saida": "ds_valvula_saida",
+    "nivel_tubulacao_percentual": "nr_nivel_tubulacao_percentual",
+    "tempo_maturacao_min": "nr_tempo_maturacao_min",
+}
 
-    df = df.copy()
+CAMPOS_OBRIGATORIOS = (
+    "dt_registro", "ds_estado_processo", "nr_temperatura_entrada",
+    "nr_temperatura_saida", "nr_vazao_l_min",
+)
+VALVULAS = ("ds_valvula_entrada", "ds_valvula_saida")
+FUSO_LOCAL = "America/Sao_Paulo"
+TARIFA_KWH = 0.52
 
-    df.columns = (
-        df.columns
-        .str.strip()
-        .str.lower()
-    )
 
-    # DATA DE CADASTRO
-    if "dt_cadastro" in df.columns:
+def normalizar_coluna(dados, campo, fuso_sem_offset):
+    if campo in ("dt_registro", "dt_cadastro"):
+        texto = dados.astype("string").str.strip()
+        com_fuso = texto.str.contains(
+            r"(?:Z|UTC|GMT|[T ]\d{2}:.*[+-]\d{2}(?::?\d{2})?)$",
+            case=False,
+            na=False,
+        )
+        # Pandas pode descartar siglas de fuso desconhecidas ao ler texto.
+        fuso_nominal = texto.str.contains(
+            r"\d{1,2}:\d{2}(?:[:.,]\d+)*\s*(?!(?:AM|PM)$)[A-Za-z][A-Za-z_./+-]*$",
+            case=False,
+            na=False,
+        )
+        datas = pd.to_datetime(
+            texto.mask(com_fuso | fuso_nominal), format="mixed", errors="coerce"
+        )
+        if fuso_sem_offset == "UTC":
+            datas = datas.dt.tz_localize("UTC").dt.tz_convert(FUSO_LOCAL).dt.tz_localize(None)
+        instantes = pd.to_datetime(
+            texto.where(com_fuso), format="mixed", errors="coerce", utc=True
+        )
+        locais = instantes.dt.tz_convert(FUSO_LOCAL).dt.tz_localize(None)
+        return datas.where(~com_fuso, locais)
 
-        df["dt_cadastro"] = pd.to_datetime(
-            df["dt_cadastro"],
-            errors="coerce",
-            utc=True
+    if campo in MEDIDAS:
+        return pd.to_numeric(dados, errors="coerce").replace(
+            [float("inf"), float("-inf")], float("nan")
         )
 
-        df["dt_cadastro"] = (
-            df["dt_cadastro"]
-            .dt.tz_convert("America/Sao_Paulo")
-            .dt.tz_localize(None)
+    texto = dados.astype("string").str.strip()
+    texto = texto.mask(texto.eq(""))
+    if campo in ("ds_estado_processo", *VALVULAS):
+        texto = texto.str.upper()
+    if campo in VALVULAS:
+        texto = texto.replace({
+            "1": "ABERTA", "1.0": "ABERTA", "TRUE": "ABERTA", "ABERTO": "ABERTA",
+            "0": "FECHADA", "0.0": "FECHADA", "FALSE": "FECHADA", "FECHADO": "FECHADA",
+        })
+    if campo == "fg_validado":
+        texto = texto.str.lower()
+    return texto
+
+
+def preparar_base(df, *, fuso_sem_offset=FUSO_LOCAL):
+    """Normaliza leituras e conserva o horário de parede local por padrão."""
+    if fuso_sem_offset not in (FUSO_LOCAL, "UTC"):
+        raise ValueError(f"Fuso das datas sem offset inválido. Escolha {FUSO_LOCAL} ou UTC.")
+    df = df.copy().reset_index(drop=True)
+    df.columns = df.columns.astype(str).str.strip().str.lower()
+    # Pandas acrescenta um sufixo numérico a cabeçalhos repetidos.
+    sem_sufixo = df.columns.str.replace(r"\.\d+$", "", regex=True)
+    conhecidas = [*MAPA_COLUNAS, *MEDIDAS, *DIMENSOES, "dt_registro", "dt_cadastro", "fg_validado"]
+    duplicadas = df.columns[df.columns.duplicated()].union(
+        sem_sufixo[sem_sufixo.duplicated() & sem_sufixo.isin(conhecidas)]
+    ).unique()
+    if len(duplicadas):
+        raise ValueError(f"Colunas duplicadas: {', '.join(duplicadas)}.")
+
+    for alias, campo in MAPA_COLUNAS.items():
+        if alias not in df:
+            continue
+        if campo not in df:
+            df = df.rename(columns={alias: campo})
+            continue
+        original = normalizar_coluna(df[campo], campo, fuso_sem_offset)
+        alternativa = normalizar_coluna(df[alias], campo, fuso_sem_offset)
+        bruto_original = df[campo].astype("string").str.strip().replace("", pd.NA)
+        bruto_alternativo = df[alias].astype("string").str.strip().replace("", pd.NA)
+        ambos_preenchidos = bruto_original.notna() & bruto_alternativo.notna()
+        ambos_invalidos_iguais = (
+            original.isna() & alternativa.isna() & bruto_original.eq(bruto_alternativo).fillna(False)
         )
+        iguais = original.eq(alternativa).fillna(False) | ambos_invalidos_iguais
+        if (ambos_preenchidos & ~iguais).any():
+            raise ValueError(f"Valores conflitantes nas colunas '{campo}' e '{alias}'.")
+        # Conserve os valores brutos até a conversão única de datas abaixo.
+        df[campo] = bruto_original.where(original.notna(), bruto_alternativo)
+        df = df.drop(columns=alias)
 
-    # DATA DA LEITURA
-    if "dt_registro" in df.columns:
+    faltantes = [campo for campo in CAMPOS_OBRIGATORIOS if campo not in df]
+    if faltantes:
+        raise ValueError(f"Colunas obrigatórias ausentes: {', '.join(faltantes)}.")
 
-        df["dt_registro"] = pd.to_datetime(
-            df["dt_registro"],
-            errors="coerce",
-            utc=True
-        )
+    for campo in (*MEDIDAS, "dt_registro", "dt_cadastro", "ds_estado_processo", "ds_origem",
+                  *VALVULAS, "fg_validado"):
+        if campo in df:
+            df[campo] = normalizar_coluna(df[campo], campo, fuso_sem_offset)
 
-        df["dt_registro"] = (
-            df["dt_registro"]
-            .dt.tz_convert("America/Sao_Paulo")
-            .dt.tz_localize(None)
-        )
+    if df["dt_registro"].isna().all():
+        raise ValueError("Nenhuma data de leitura válida em 'dt_registro' ou 'timestamp'.")
 
-        df = df.sort_values("dt_registro")
+    delta = df["nr_temperatura_saida"] - df["nr_temperatura_entrada"]
+    if "nr_delta_t" in df:
+        delta = df["nr_delta_t"].fillna(delta)
+    df["nr_delta_t"] = delta.replace([float("inf"), float("-inf")], float("nan"))
 
-        df["data"] = df["dt_registro"].dt.date
-        df["hora"] = df["dt_registro"].dt.hour
-        df["mes"] = df["dt_registro"].dt.month
-        df["ano"] = df["dt_registro"].dt.year
-
-    # CAMPOS NUMÉRICOS
-    for coluna in MEDIDAS:
-
-        if coluna in df.columns:
-
-            df[coluna] = pd.to_numeric(
-                df[coluna],
-                errors="coerce"
-            )
-
-    # FLAG VALIDADO
-    if "fg_validado" in df.columns:
-
-        df["fg_validado"] = (
-            df["fg_validado"]
-            .astype(str)
-            .str.lower()
-            .str.strip()
-        )
-
+    df = df.sort_values("dt_registro", kind="stable", ignore_index=True)
+    datas = df["dt_registro"].dt
+    df["data"], df["hora"], df["mes"], df["ano"] = datas.date, datas.hour, datas.month, datas.year
     return df
+
+
+def formatar_valor(valor, unidade=""):
+    return "N/D" if pd.isna(valor) else f"{float(valor):.2f}{unidade}"
+
+
+def total_periodo(base, campo):
+    """Um total do período requer valor para cada leitura selecionada."""
+    if campo in base and not base.empty:
+        return base[campo].sum(min_count=len(base))
+    return float("nan")
 
 
 def obter_dimensoes(df):
@@ -304,7 +373,7 @@ def gerar_pdf_relatorio(
 
     def formatar_markdown(texto):
 
-        texto = texto.strip()
+        texto = escape(texto.strip())
 
         texto = re.sub(
             r"\*\*(.+?)\*\*",

@@ -2,6 +2,8 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 
+from function_monitoramento import TARIFA_KWH, formatar_valor, total_periodo
+
 
 # ============================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -43,6 +45,10 @@ if df["dt_registro"].dt.tz is not None:
     )
 
 # Remover registros sem data válida
+datas_invalidas = int(df["dt_registro"].isna().sum())
+if datas_invalidas:
+    st.warning(f"{datas_invalidas:,} registros com data inválida foram excluídos.")
+
 df = (
     df
     .dropna(subset=["dt_registro"])
@@ -127,12 +133,16 @@ else:
         max_value=data_max.date()
     )
 
+    if data_inicial is None or data_final is None:
+        st.info("Informe as duas datas para aplicar o período personalizado.")
+        st.stop()
+
     inicio = pd.Timestamp(data_inicial)
 
     fim = (
         pd.Timestamp(data_final)
         + pd.Timedelta(days=1)
-        - pd.Timedelta(microseconds=1)
+        - pd.Timedelta(nanoseconds=1)
     )
 
 
@@ -241,19 +251,19 @@ col1.metric(
 
 col2.metric(
     "Temperatura média de entrada",
-    f"{base['nr_temperatura_entrada'].mean():.2f} °C"
+    formatar_valor(base["nr_temperatura_entrada"].mean(), " °C")
 )
 
 
 col3.metric(
     "Temperatura média de saída",
-    f"{base['nr_temperatura_saida'].mean():.2f} °C"
+    formatar_valor(base["nr_temperatura_saida"].mean(), " °C")
 )
 
 
 col4.metric(
     "ΔT médio",
-    f"{base['nr_delta_t'].mean():.2f} °C"
+    formatar_valor(base["nr_delta_t"].mean(), " °C")
 )
 
 
@@ -269,37 +279,37 @@ col1, col2, col3, col4 = st.columns(4)
 
 col1.metric(
     "Vazão média",
-    f"{base['nr_vazao_l_min'].mean():.2f} L/min"
+    formatar_valor(base["nr_vazao_l_min"].mean(), " L/min")
 )
 
+
+energia_periodo = total_periodo(base, "nr_energia_kwh")
 
 col2.metric(
     "Energia térmica no período",
-    f"{base['nr_energia_kwh'].sum():.2f} kWh"
+    formatar_valor(energia_periodo, " kWh")
 )
 
+
+desempenho = base.get(
+    "nr_desempenho_termico_percentual", pd.Series(dtype=float)
+)
 
 col3.metric(
     "Desempenho térmico médio",
-    f"{base['nr_desempenho_termico_percentual'].mean():.2f} %"
+    formatar_valor(desempenho.mean(), " %")
 )
 
 
-# Economia calculada a partir da energia do período
-# utilizando a tarifa adotada no projeto
-TARIFA_KWH = 0.52
-
-economia_periodo = (
-    base["nr_energia_kwh"].sum()
-    * TARIFA_KWH
-)
-
-
+economia_periodo = energia_periodo * TARIFA_KWH
 col4.metric(
     "Economia financeira estimada",
-    f"R$ {economia_periodo:.2f}"
+    "N/D" if pd.isna(economia_periodo) else f"R$ {economia_periodo:.2f}",
 )
-
+st.caption(
+    "A energia depende dos valores fornecidos por leitura. A economia usa a tarifa "
+    "de referência e o desempenho térmico expressa o atendimento a um ΔT de projeto."
+)
 
 st.divider()
 
@@ -426,7 +436,7 @@ fig_temperaturas.update_xaxes(
 
 st.plotly_chart(
     fig_temperaturas,
-    use_container_width=True
+    width="stretch"
 )
 
 
@@ -455,7 +465,7 @@ fig_delta.update_layout(
 
 st.plotly_chart(
     fig_delta,
-    use_container_width=True
+    width="stretch"
 )
 
 
@@ -485,7 +495,7 @@ fig_hist_delta.update_layout(
 
 st.plotly_chart(
     fig_hist_delta,
-    use_container_width=True
+    width="stretch"
 )
 
 
@@ -514,7 +524,7 @@ fig_vazao.update_layout(
 
 st.plotly_chart(
     fig_vazao,
-    use_container_width=True
+    width="stretch"
 )
 
 
@@ -554,7 +564,7 @@ fig_estados.update_layout(
 
 st.plotly_chart(
     fig_estados,
-    use_container_width=True
+    width="stretch"
 )
 
 
@@ -565,49 +575,58 @@ st.plotly_chart(
 st.subheader("Desempenho térmico médio por estado")
 
 
-desempenho_estado = (
-    df_periodo
-    .groupby(
-        "ds_estado_processo",
-        as_index=False
+if (
+    "nr_desempenho_termico_percentual" in df_periodo
+    and df_periodo["nr_desempenho_termico_percentual"].notna().any()
+    and df_periodo.loc[
+        df_periodo["nr_desempenho_termico_percentual"].notna(), "ds_estado_processo"
+    ].notna().any()
+):
+    desempenho_estado = (
+        df_periodo
+        .groupby(
+            "ds_estado_processo",
+            as_index=False
+        )
+        ["nr_desempenho_termico_percentual"]
+        .mean()
+        .dropna(subset=["nr_desempenho_termico_percentual"])
     )
-    ["nr_desempenho_termico_percentual"]
-    .mean()
-)
 
 
-desempenho_estado = desempenho_estado.rename(
-    columns={
-        "ds_estado_processo": "estado",
-        "nr_desempenho_termico_percentual":
-            "desempenho_medio"
-    }
-)
+    desempenho_estado = desempenho_estado.rename(
+        columns={
+            "ds_estado_processo": "estado",
+            "nr_desempenho_termico_percentual":
+                "desempenho_medio"
+        }
+    )
 
 
-fig_desempenho = px.bar(
-    desempenho_estado,
-    x="estado",
-    y="desempenho_medio",
-    text_auto=".1f",
-    labels={
-        "estado": "Estado",
-        "desempenho_medio":
-            "Desempenho térmico médio (%)"
-    }
-)
+    fig_desempenho = px.bar(
+        desempenho_estado,
+        x="estado",
+        y="desempenho_medio",
+        text_auto=".1f",
+        labels={
+            "estado": "Estado",
+            "desempenho_medio":
+                "Desempenho térmico médio (%)"
+        }
+    )
 
 
-fig_desempenho.update_layout(
-    showlegend=False
-)
+    fig_desempenho.update_layout(
+        showlegend=False
+    )
 
 
-st.plotly_chart(
-    fig_desempenho,
-    use_container_width=True
-)
-
+    st.plotly_chart(
+        fig_desempenho,
+        width="stretch"
+    )
+else:
+    st.info("N/D: sem dados de desempenho térmico associados a estados.")
 
 # ============================================================
 # CRITICIDADE
@@ -649,5 +668,5 @@ if "ds_criticidade" in df_periodo.columns:
 
     st.plotly_chart(
         fig_criticidade,
-        use_container_width=True
+        width="stretch"
     )

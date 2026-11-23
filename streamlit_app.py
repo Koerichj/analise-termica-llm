@@ -4,6 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from function_monitoramento import preparar_base
+
 st.set_page_config(
     page_title="Monitoramento Térmico Inteligente",
     page_icon=":material/monitoring:",
@@ -91,7 +93,7 @@ def carregar_base_visao_geral():
     caminho = Path(__file__).resolve().parent / "data" / "amostra_leituras.csv"
     if caminho.is_file():
         try:
-            amostra = pd.read_csv(caminho)
+            amostra = preparar_base(pd.read_csv(caminho))
             if not amostra.empty:
                 return amostra, "Amostra sintética de demonstração", True
         except (OSError, ValueError, pd.errors.ParserError):
@@ -99,30 +101,22 @@ def carregar_base_visao_geral():
 
     return pd.DataFrame(), "Nenhuma base disponível", False
 
-def coluna_numerica(df, *alternativas):
-    for coluna in alternativas:
-        if coluna in df.columns:
-            return pd.to_numeric(df[coluna], errors="coerce")
-    return pd.Series(float("nan"), index=df.index)
-
 def formatar(valor, casas=1, unidade=""):
     if pd.isna(valor):
-        return "—"
+        return "N/D"
     texto = f"{valor:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"{texto}{unidade}"
 
 def preparar_preview(df):
-    dados = df.copy()
-    dados["_entrada"] = coluna_numerica(dados, "nr_temperatura_entrada", "temperatura_entrada")
-    dados["_saida"] = coluna_numerica(dados, "nr_temperatura_saida", "temperatura_saida")
-    dados["_vazao"] = coluna_numerica(dados, "nr_vazao_l_min", "vazao_l_min")
-    dados["_delta"] = coluna_numerica(dados, "nr_delta_t", "delta_t")
-    if dados["_delta"].isna().all():
-        dados["_delta"] = dados["_saida"] - dados["_entrada"]
+    dados = df.rename(columns={
+        "nr_temperatura_entrada": "_entrada",
+        "nr_temperatura_saida": "_saida",
+        "nr_vazao_l_min": "_vazao",
+        "nr_delta_t": "_delta",
+        "dt_registro": "_instante",
+    })
+    return dados.dropna(subset=["_instante"]).sort_values("_instante")
 
-    data_col = next((c for c in ("dt_registro", "timestamp") if c in dados.columns), None)
-    dados["_instante"] = pd.to_datetime(dados[data_col], errors="coerce") if data_col else pd.NaT
-    return dados.sort_values("_instante", na_position="last")
 
 def exibir_grafico(df):
     plot = df.dropna(subset=["_instante"]).copy()
@@ -157,7 +151,7 @@ def exibir_grafico(df):
     )
     figura.update_xaxes(showgrid=False)
     figura.update_yaxes(gridcolor="rgba(127, 145, 165, .18)")
-    st.plotly_chart(figura, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(figura, width="stretch", config={"displayModeBar": False})
 
 def pagina_inicial():
     st.markdown(CSS, unsafe_allow_html=True)
